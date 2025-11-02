@@ -11,6 +11,9 @@ st.write(
 # Ask user for their Gemini API key via `st.text_input`.
 gemini_api_key = st.text_input("Gemini API Key", type="password")
 
+# デバッグモードの追加
+debug_mode = st.checkbox("デバッグモード", value=True)
+
 if not gemini_api_key:
     st.info("Please add your Gemini API key to continue.", icon="🗝️")
 else:
@@ -33,6 +36,13 @@ else:
         # Process the uploaded file and question.
         document = uploaded_file.read().decode()
         
+        if debug_mode:
+            st.write("### デバッグ情報")
+            st.write(f"**ドキュメント長:** {len(document)} 文字")
+            st.write(f"**質問:** {question}")
+            with st.expander("ドキュメント内容（最初の500文字）"):
+                st.text(document[:500])
+        
         # Prepare the request payload for Gemini API
         payload = {
             "contents": [
@@ -47,8 +57,16 @@ else:
             ]
         }
         
+        if debug_mode:
+            st.write("**リクエストURL:**", f"{GEMINI_API_URL}?key=****")
+            with st.expander("リクエストペイロード"):
+                st.json(payload)
+        
         # Generate an answer using the Gemini API.
         try:
+            if debug_mode:
+                st.write("**リクエスト送信中...**")
+            
             with st.spinner("Generating answer..."):
                 response = requests.post(
                     f"{GEMINI_API_URL}?key={gemini_api_key}",
@@ -57,31 +75,81 @@ else:
                     timeout=120
                 )
             
+            if debug_mode:
+                st.write(f"**HTTPステータスコード:** {response.status_code}")
+                st.write(f"**レスポンスヘッダー:** {dict(response.headers)}")
+                with st.expander("生のレスポンステキスト（最初の1000文字）"):
+                    st.code(response.text[:1000])
+            
             if response.status_code == 200:
-                response_data = response.json()
-                
-                # Extract text from the response
-                full_response = ""
-                if 'candidates' in response_data:
-                    for candidate in response_data['candidates']:
-                        if 'content' in candidate:
-                            for part in candidate['content'].get('parts', []):
-                                if 'text' in part:
-                                    full_response += part['text']
-                
-                if full_response:
-                    st.write(full_response)
-                else:
-                    st.warning("No response generated.")
+                try:
+                    response_data = response.json()
+                    
+                    if debug_mode:
+                        with st.expander("完全なレスポンスJSON"):
+                            st.json(response_data)
+                    
+                    # Extract text from the response
+                    full_response = ""
+                    if 'candidates' in response_data:
+                        if debug_mode:
+                            st.write(f"**候補数:** {len(response_data['candidates'])}")
+                        
+                        for idx, candidate in enumerate(response_data['candidates']):
+                            if debug_mode:
+                                st.write(f"**候補 {idx}:**")
+                                if 'finishReason' in candidate:
+                                    st.write(f"  - finishReason: {candidate['finishReason']}")
+                            
+                            if 'content' in candidate:
+                                parts = candidate['content'].get('parts', [])
+                                if debug_mode:
+                                    st.write(f"  - parts数: {len(parts)}")
+                                
+                                for part_idx, part in enumerate(parts):
+                                    if 'text' in part:
+                                        text_content = part['text']
+                                        if debug_mode:
+                                            st.write(f"  - part {part_idx} テキスト長: {len(text_content)}")
+                                        full_response += text_content
+                    else:
+                        if debug_mode:
+                            st.warning("レスポンスに 'candidates' キーがありません")
+                    
+                    if debug_mode:
+                        st.write(f"**抽出されたテキスト長:** {len(full_response)}")
+                        with st.expander("抽出されたテキスト全文"):
+                            st.text(full_response)
+                    
+                    if full_response:
+                        st.write("### 回答:")
+                        st.write(full_response)
+                    else:
+                        st.warning("No response generated.")
+                        
+                except Exception as e:
+                    st.error(f"レスポンス解析エラー: {str(e)}")
+                    if debug_mode:
+                        st.exception(e)
             else:
                 error_message = f"API Error: {response.status_code}"
                 try:
                     error_data = response.json()
+                    if debug_mode:
+                        with st.expander("エラーレスポンス詳細"):
+                            st.json(error_data)
                     if 'error' in error_data:
                         error_message = error_data['error'].get('message', error_message)
-                except:
-                    pass
+                except Exception as e:
+                    if debug_mode:
+                        st.write("エラーレスポンスのJSON解析に失敗:")
+                        st.exception(e)
+                
                 st.error(error_message)
                 
+        except requests.exceptions.Timeout:
+            st.error("リクエストがタイムアウトしました（120秒）")
         except requests.exceptions.RequestException as e:
-            st.error(f"API communication error: {str(e)}")
+            st.error(f"API通信エラー: {str(e)}")
+            if debug_mode:
+                st.exception(e)
